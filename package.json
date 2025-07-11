@@ -3,9 +3,15 @@
   "version": "1.0.50",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "bun run --watch src/index.ts"
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "build": "bun run build --compile --minify --target bun --outfile server ./src/index.ts",
+    "build-js": "bun run build --compile --minify-whitespace --minify-syntax --target bun --outfile ./dist/index.js ./src/index.js",
+    "prod": "./server",
+    "prod-js": "bun run ./dist/index.js"
   },
   "dependencies": {
+    "@influxdata/influxdb3-client": "^1.2.0",
     "elysia": "latest"
   },
   "devDependencies": {
