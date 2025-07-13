@@ -21,6 +21,8 @@ export async function authenticateUser(username: string, password: string) {
 }
 
 export async function createUser(username: string, password: string) {
-  const [user] = await db.insert(usersTable).values({ username, password }).returning({ id: usersTable.id })
+  const hashedPassword = await bcrypt.hash(password, 10)
+  const [user] = await db.insert(usersTable).values({ username, password: hashedPassword }).returning({ id: usersTable.id })
+  
   return user
 }

@@ -1,6 +1,10 @@
-import { Point } from "@influxdata/influxdb3-client";
-import { client } from ".";
+import { InfluxDBClient, Point } from "@influxdata/influxdb3-client";
 import { InsertPayload } from "./types";
+
+const client = new InfluxDBClient({
+  host: process.env.INFLUXDB_HOST!,
+  token: process.env.INFLUXDB_TOKEN,
+});
 
 export async function getAllTemperatures() {
   const query = `SELECT * FROM readings WHERE time >= now() - interval '1 day' ORDER BY time DESC`;

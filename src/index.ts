@@ -1,21 +1,13 @@
 import mqtt from "mqtt/*";
-import bcrypt from "bcrypt"
 import { jwt } from "@elysiajs/jwt";
 import { cors } from "@elysiajs/cors";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { Elysia, t } from "elysia";
-import { InfluxDBClient } from "@influxdata/influxdb3-client";
-import { insertReading } from "./readings";
 import { authenticateUser, createUser } from "./auth";
-import { getAllTemperatures, getTemperaturesOf } from "./temperature";
+import { getAllReadings, getReadingsOf, insertReading } from "./readings";
 
 
-const client = new InfluxDBClient({
-  host: process.env.INFLUXDB_HOST!,
-  token: process.env.INFLUXDB_TOKEN,
-});
-
-const db = drizzle(process.env.DATABASE_URL!)
+export const db = drizzle(process.env.DATABASE_URL!)
 
 const mqttClient = mqtt.connect({
   host: process.env.MQTT_CLUSTER_URL,
@@ -25,14 +17,14 @@ const mqttClient = mqtt.connect({
   protocol: "mqtts"
 });
 
-export { client, db, mqttClient };
-
-
 mqttClient.on("connect", () => {
   console.log("Connected to MQTT broker");
 });
 
-mqttClient.on("message", (topic, message) => {
+var ledStates = "";
+var relayStates = "";
+
+mqttClient.on("message", async (topic, message) => {
   switch (topic) {
     case "pi/readings":
       const [user_id, t, h, room] = message.toString().split("|");
@@ -44,6 +36,16 @@ mqttClient.on("message", (topic, message) => {
       });
       break;
 
+    case "pi/led":
+      ledStates = message.toString(); // 1|0|1|0
+      app.server?.publish("pi-status", JSON.stringify({ type: "led", states: ledStates }), true);
+      break;
+
+    case "pi/relay":
+      relayStates = message.toString(); // fan1|ac2|light3|fan4
+      app.server?.publish("pi-status", JSON.stringify({ type: "relay", states: relayStates }), true);
+      break;
+
     default:
       console.log("Unknown topic:", topic);
       break;
@@ -51,13 +53,14 @@ mqttClient.on("message", (topic, message) => {
 });
 
 mqttClient.subscribe("pi/readings");
+mqttClient.subscribe("pi/led");
+mqttClient.subscribe("pi/relay");
 
 mqttClient.on("error", (error) => {
   console.error("Error connecting to MQTT broker:", error);
 });
 
-
-new Elysia({ precompile: true })
+const app = new Elysia({ precompile: true })
   .use(cors({
     origin: "*",
     credentials: true,
@@ -123,7 +126,7 @@ new Elysia({ precompile: true })
   })
   .post("/signup", async ({ body, status, cookie, access_token, refresh_token }) => {
     const { username, password } = body;
-    const { id } = await createUser(username, await bcrypt.hash(password, 10))
+    const { id } = await createUser(username, password)
     
     const payload = {
       id,
@@ -174,14 +177,12 @@ new Elysia({ precompile: true })
   })
   .post("/refresh", async ({ access_token, refresh_token, cookie, status }) => {
     try {
-      if (!cookie.refresh_token.value) {
+      if (!cookie.refresh_token.value)
         return status(401, "Invalid refresh token");
-      }
       
       const user = await refresh_token.verify(cookie.refresh_token.value);
-      if (!user) {
+      if (user === false)
         return status(401, "Invalid refresh token");
-      }
       
       const payload = {
         id: user.id,
@@ -222,7 +223,11 @@ new Elysia({ precompile: true })
     }
 
     try {
-      return { user: await access_token.verify(token) };
+      const user = await access_token.verify(token);
+      if (user === false)
+        return { user: null };
+
+      return { user };
     }
     catch (error) {
       console.error(error);
@@ -231,13 +236,27 @@ new Elysia({ precompile: true })
   })
 
   .get("/me", async ({ user, status }) => {
-    if (!user) {
+    if (!user)
       return status(401, "Invalid access token");
-    }
+
     return user;
   })
-  .get("/readings", async () => await getAllTemperatures())
-  .get("/readings/:room", async ({ params }) => await getTemperaturesOf(params.room))
+  .get("/readings", async ({ user, status }) => {
+    if (!user)
+      return status(401, "Invalid access token");
+
+    return await getAllReadings({ user_id: user.id });
+  })
+  .get("/readings/:room", async ({ params, user, status }) => {
+    if (!user)
+      return status(401, "Invalid access token");
+    
+    return await getReadingsOf({ user_id: user.id, room: params.room });
+  }, {
+    params: t.Object({
+      room: t.String()
+    })
+  })
   .post("/readings", async ({ body }) => await insertReading(body), {
     body: t.Object({
       user_id: t.Number(),
@@ -245,5 +264,48 @@ new Elysia({ precompile: true })
       humidity: t.Number(),
       room: t.String()
     })
+  })
+
+  .ws("/ws", {
+    body: t.Object({
+      target: t.String(),
+      id: t.String(),
+      action: t.String()
+    }),
+    open(ws) {
+      console.log(`WebSocket opened for user ${ws.data.user?.id}`);
+      ws.send(JSON.stringify([
+        {
+          type: "led",
+          states: ledStates
+        },
+        {
+          type: "relay",
+          states: relayStates
+        }
+      ]));
+      ws.subscribe("pi-status");
+    },
+    message(ws, message) {
+      console.log(`Received message from user ${ws.data.user?.id}:`, message);
+
+      // Assuming message is in the format: { "target": "led", "id": 1, "action": "on" }
+      // Or: { "target": "relay", "id": "fan1", "action": "toggle" }
+      try {
+        const { target, id, action } = message;
+        
+        const topic = `pi/control/${target}`;
+        const payload = `${id}|${action}`;
+        // mqttClient.publish(topic, payload);
+        console.log(`Published to ${topic}: ${payload}`);
+      }
+      catch (error) {
+        console.error("Invalid WebSocket message format");
+      }
+    },
+    close(ws) {
+      console.log(`WebSocket closed for user ${ws.data.user?.id}`);
+      ws.unsubscribe("pi-status");
+    }
   })
   .listen({ hostname: "0.0.0.0", port: 3000 });
