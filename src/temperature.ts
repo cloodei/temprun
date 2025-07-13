@@ -1,5 +1,6 @@
 import { Point } from "@influxdata/influxdb3-client";
-import { client } from "./db";
+import { client } from ".";
+import { InsertPayload } from "./types";
 
 export async function getAllTemperatures() {
   const query = `SELECT * FROM readings WHERE time >= now() - interval '1 day' ORDER BY time DESC`;
@@ -31,11 +32,6 @@ export async function getTemperaturesOf(room: string) {
   return data;
 }
 
-type InsertPayload = {
-  temperature: number;
-  humidity: number;
-  room: string;
-};
 export async function insert({ temperature, humidity, room }: InsertPayload) {
   const point = Point.measurement("readings")
     .setTag("room", room)
