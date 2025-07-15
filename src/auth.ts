@@ -2,6 +2,7 @@ import bcrypt from "bcrypt"
 import { eq } from "drizzle-orm";
 import { db } from "."
 import { usersTable } from "./db/schema"
+import { PostgresError } from "postgres";
 
 export async function findUser(username: string) {
   const user = await db.select({ id: usersTable.id, password: usersTable.password }).from(usersTable).where(eq(usersTable.username, username))
@@ -22,7 +23,15 @@ export async function authenticateUser(username: string, password: string) {
 
 export async function createUser(username: string, password: string) {
   const hashedPassword = await bcrypt.hash(password, 10)
-  const [user] = await db.insert(usersTable).values({ username, password: hashedPassword }).returning({ id: usersTable.id })
-  
-  return user
+
+  try {
+    const [user] = await db.insert(usersTable).values({ username, password: hashedPassword }).returning({ id: usersTable.id })
+    return user
+  }
+  catch (error) {
+    if (error instanceof PostgresError && error.code === "23505")
+      return true
+    
+    return false
+  }
 }

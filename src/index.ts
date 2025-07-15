@@ -1,4 +1,4 @@
-import mqtt from "mqtt/*";
+import mqtt from "mqtt";
 import { jwt } from "@elysiajs/jwt";
 import { cors } from "@elysiajs/cors";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -21,40 +21,17 @@ mqttClient.on("connect", () => {
   console.log("Connected to MQTT broker");
 });
 
-var ledStates = "";
-var relayStates = "";
-
-mqttClient.on("message", async (topic, message) => {
-  switch (topic) {
-    case "pi/readings":
-      const [user_id, t, h, room] = message.toString().split("|");
-      insertReading({
-        user_id: Number(user_id),
-        temperature: Number(t),
-        humidity: Number(h),
-        room
-      });
-      break;
-
-    case "pi/led":
-      ledStates = message.toString(); // 1|0|1|0
-      app.server?.publish("pi-status", JSON.stringify({ type: "led", states: ledStates }), true);
-      break;
-
-    case "pi/relay":
-      relayStates = message.toString(); // fan1|ac2|light3|fan4
-      app.server?.publish("pi-status", JSON.stringify({ type: "relay", states: relayStates }), true);
-      break;
-
-    default:
-      console.log("Unknown topic:", topic);
-      break;
-  }
+mqttClient.on("message", async (_, message) => {
+  const [user_id, t, h, room] = message.toString().split("|");
+  insertReading({
+    user_id: Number(user_id),
+    temperature: Number(t),
+    humidity: Number(h),
+    room
+  });
 });
 
 mqttClient.subscribe("pi/readings");
-mqttClient.subscribe("pi/led");
-mqttClient.subscribe("pi/relay");
 
 mqttClient.on("error", (error) => {
   console.error("Error connecting to MQTT broker:", error);
@@ -90,9 +67,9 @@ const app = new Elysia({ precompile: true })
     const user = await authenticateUser(username, password)
     
     if (user === false)
-      return status(401, "User not found");
+      return status(404, "User not found");
     if (user === true)
-      return status(403, "Invalid credentials");
+      return status(400, "Invalid credentials");
     
     const payload = {
       id: user.id,
@@ -126,10 +103,15 @@ const app = new Elysia({ precompile: true })
   })
   .post("/signup", async ({ body, status, cookie, access_token, refresh_token }) => {
     const { username, password } = body;
-    const { id } = await createUser(username, password)
+    const user = await createUser(username, password)
+    
+    if (user === false)
+      return status(406, "Unable to create user");
+    if (user === true)
+      return status(409, "User already exists");
     
     const payload = {
-      id,
+      id: user.id,
       username
     }
     
@@ -178,11 +160,11 @@ const app = new Elysia({ precompile: true })
   .post("/refresh", async ({ access_token, refresh_token, cookie, status }) => {
     try {
       if (!cookie.refresh_token.value)
-        return status(401, "Invalid refresh token");
+        return status(400, "Invalid refresh token");
       
       const user = await refresh_token.verify(cookie.refresh_token.value);
       if (user === false)
-        return status(401, "Invalid refresh token");
+        return status(400, "Invalid refresh token");
       
       const payload = {
         id: user.id,
@@ -209,7 +191,59 @@ const app = new Elysia({ precompile: true })
     }
     catch (error) {
       console.error(error);
-      return status(401, "Invalid refresh token");
+      return status(400, "Invalid refresh token");
+    }
+  }, {
+    cookie: t.Object({
+      refresh_token: t.String()
+    })
+  })
+  .get("/me", async ({ headers, access_token, refresh_token, cookie, status }) => {
+    const token = headers["authorization"]?.split(" ")[1];
+    if (!token || !token.startsWith("Bearer "))
+      return status(401, "Invalid access token");
+
+    try {
+      let user = await access_token.verify(token);
+      if (user)
+        return {
+          access_token: token,
+          user
+        };
+      
+      if (!cookie.refresh_token.value)
+        return status(400, "Invalid refresh token");
+      
+      user = await refresh_token.verify(cookie.refresh_token.value);
+      if (user === false)
+        return status(400, "Invalid refresh token");
+        
+      const payload = {
+        id: user.id,
+        username: user.username
+      }
+      
+      const [accessToken, refreshToken] = await Promise.all([
+        access_token.sign(payload),
+        refresh_token.sign(payload)
+      ]);
+      
+      cookie.refresh_token.set({
+        value: refreshToken,
+        httpOnly: true,
+        maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict"
+      })
+      
+      return {
+        access_token: accessToken,
+        user: payload
+      }
+    }
+    catch (error) {
+      console.error(error);
+      return status(400, "Invalid access token");
     }
   }, {
     cookie: t.Object({
@@ -218,9 +252,8 @@ const app = new Elysia({ precompile: true })
   })
   .derive(async ({ headers, access_token }) => {
     const token = headers["authorization"]?.split(" ")[1];
-    if (!token || !token.startsWith("Bearer ")) {
+    if (!token || !token.startsWith("Bearer "))
       return { user: null };
-    }
 
     try {
       const user = await access_token.verify(token);
@@ -235,21 +268,15 @@ const app = new Elysia({ precompile: true })
     }
   })
 
-  .get("/me", async ({ user, status }) => {
-    if (!user)
-      return status(401, "Invalid access token");
-
-    return user;
-  })
   .get("/readings", async ({ user, status }) => {
     if (!user)
-      return status(401, "Invalid access token");
+      return status(400, "Invalid access token");
 
     return await getAllReadings({ user_id: user.id });
   })
   .get("/readings/:room", async ({ params, user, status }) => {
     if (!user)
-      return status(401, "Invalid access token");
+      return status(400, "Invalid access token");
     
     return await getReadingsOf({ user_id: user.id, room: params.room });
   }, {
@@ -264,48 +291,5 @@ const app = new Elysia({ precompile: true })
       humidity: t.Number(),
       room: t.String()
     })
-  })
-
-  .ws("/ws", {
-    body: t.Object({
-      target: t.String(),
-      id: t.String(),
-      action: t.String()
-    }),
-    open(ws) {
-      console.log(`WebSocket opened for user ${ws.data.user?.id}`);
-      ws.send(JSON.stringify([
-        {
-          type: "led",
-          states: ledStates
-        },
-        {
-          type: "relay",
-          states: relayStates
-        }
-      ]));
-      ws.subscribe("pi-status");
-    },
-    message(ws, message) {
-      console.log(`Received message from user ${ws.data.user?.id}:`, message);
-
-      // Assuming message is in the format: { "target": "led", "id": 1, "action": "on" }
-      // Or: { "target": "relay", "id": "fan1", "action": "toggle" }
-      try {
-        const { target, id, action } = message;
-        
-        const topic = `pi/control/${target}`;
-        const payload = `${id}|${action}`;
-        // mqttClient.publish(topic, payload);
-        console.log(`Published to ${topic}: ${payload}`);
-      }
-      catch (error) {
-        console.error("Invalid WebSocket message format");
-      }
-    },
-    close(ws) {
-      console.log(`WebSocket closed for user ${ws.data.user?.id}`);
-      ws.unsubscribe("pi-status");
-    }
   })
   .listen({ hostname: "0.0.0.0", port: 3000 });
