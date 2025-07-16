@@ -4,8 +4,10 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
-    "build": "bun run build --compile --minify --target bun --outfile server ./src/index.ts",
-    "build-js": "bun run build --compile --minify-whitespace --minify-syntax --target bun --outfile ./dist/index.js ./src/index.js",
+    "build-main": "bun build --compile --minify --target bun --outfile server ./src/index.ts",
+    "build-exe": "bun build --compile --minify-syntax --minify-whitespace --target bun --outfile server ./src/index.ts",
+    "build-main-js": "bun build --minify --target bun --outfile ./dist/index.js ./src/index.ts",
+    "build-js": "bun build --minify-whitespace --minify-syntax --target bun --outfile ./dist/index.js ./src/index.js",
     "prod": "./server",
     "prod-js": "bun run ./dist/index.js"
   },
