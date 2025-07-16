@@ -14,8 +14,7 @@ const mqttClient = mqtt.connect({
   username: process.env.MQTT_USERNAME,
   password: process.env.MQTT_PASSWORD,
   port: 8883,
-  protocol: "mqtts",
-  rejectUnauthorized: false 
+  protocol: "mqtts"
 });
 
 mqttClient.on("connect", () => {
