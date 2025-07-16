@@ -5,7 +5,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /usr/src/app
 
 COPY package.json ./
-COPY bun.lockb ./
 COPY src ./
 
 RUN bun install
