@@ -80,7 +80,7 @@ const app = new Elysia({ precompile: true })
       refresh_token.sign(payload)
     ]);
     
-    cookie.refresh_token.set({
+    cookie["refresh_token"].set({
       value: refreshToken,
       httpOnly: true,
       maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
@@ -93,9 +93,6 @@ const app = new Elysia({ precompile: true })
       user: payload
     }
   }, {
-    cookie: t.Object({
-      refresh_token: t.Optional(t.String())
-    }),
     body: t.Object({
       username: t.String(),
       password: t.String(),
@@ -120,7 +117,7 @@ const app = new Elysia({ precompile: true })
       refresh_token.sign(payload)
     ]);
     
-    cookie.refresh_token.set({
+    cookie["refresh_token"].set({
       value: refreshToken,
       httpOnly: true,
       maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
@@ -136,9 +133,6 @@ const app = new Elysia({ precompile: true })
     body: t.Object({
       username: t.String(),
       password: t.String(),
-    }),
-    cookie: t.Object({
-      refresh_token: t.Optional(t.String())
     })
   })
   .post("/pi/login", async ({ body }) => {
@@ -151,18 +145,14 @@ const app = new Elysia({ precompile: true })
     })
   })
   .post("/logout", async ({ cookie }) => {
-    cookie.refresh_token.remove();
-  }, {
-    cookie: t.Object({
-      refresh_token: t.Optional(t.String())
-    })
+    cookie["refresh_token"].remove();
   })
   .post("/refresh", async ({ access_token, refresh_token, cookie, status }) => {
     try {
-      if (!cookie.refresh_token.value)
+      if (!cookie["refresh_token"]?.value)
         return status(400, "Invalid refresh token");
       
-      const user = await refresh_token.verify(cookie.refresh_token.value);
+      const user = await refresh_token.verify(cookie["refresh_token"].value);
       if (user === false)
         return status(400, "Invalid refresh token");
       
@@ -176,7 +166,7 @@ const app = new Elysia({ precompile: true })
         refresh_token.sign(payload)
       ]);
       
-      cookie.refresh_token.set({
+      cookie["refresh_token"].set({
         value: refreshToken,
         httpOnly: true,
         maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
@@ -193,10 +183,6 @@ const app = new Elysia({ precompile: true })
       console.error(error);
       return status(400, "Invalid refresh token");
     }
-  }, {
-    cookie: t.Object({
-      refresh_token: t.String()
-    })
   })
   .get("/me", async ({ headers, access_token, refresh_token, cookie, status }) => {
     const token = headers["authorization"]?.split(" ")[1];
@@ -211,10 +197,10 @@ const app = new Elysia({ precompile: true })
           user
         };
       
-      if (!cookie.refresh_token.value)
+      if (!cookie["refresh_token"]?.value)
         return status(400, "Invalid refresh token");
       
-      user = await refresh_token.verify(cookie.refresh_token.value);
+      user = await refresh_token.verify(cookie["refresh_token"].value);
       if (user === false)
         return status(400, "Invalid refresh token");
         
@@ -228,7 +214,7 @@ const app = new Elysia({ precompile: true })
         refresh_token.sign(payload)
       ]);
       
-      cookie.refresh_token.set({
+      cookie["refresh_token"].set({
         value: refreshToken,
         httpOnly: true,
         maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
@@ -245,18 +231,14 @@ const app = new Elysia({ precompile: true })
       console.error(error);
       return status(400, "Invalid access token");
     }
-  }, {
-    cookie: t.Object({
-      refresh_token: t.String()
-    })
   })
   .derive(async ({ headers, access_token }) => {
-    const token = headers["authorization"]?.split(" ")[1];
-    if (!token || !token.startsWith("Bearer "))
+    const token = headers["authorization"]?.split(" ");
+    if (!token || token.length !== 2 || token[0] !== "Bearer")
       return { user: null };
 
     try {
-      const user = await access_token.verify(token);
+      const user = await access_token.verify(token[1]);
       if (user === false)
         return { user: null };
 
