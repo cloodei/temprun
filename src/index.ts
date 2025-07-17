@@ -39,7 +39,7 @@ mqttClient.on("error", (error) => {
 
 const app = new Elysia({ precompile: true })
   .use(cors({
-    origin: "*",
+    origin: ["http://localhost:5173", "https://flare.nguyenan-study.workers.dev"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"]
   }))
@@ -84,8 +84,8 @@ const app = new Elysia({ precompile: true })
       value: refreshToken,
       httpOnly: true,
       maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict"
+      secure: true,
+      sameSite: "none"
     })
     
     return {
@@ -121,8 +121,8 @@ const app = new Elysia({ precompile: true })
       value: refreshToken,
       httpOnly: true,
       maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict"
+      secure: true,
+      sameSite: "none"
     })
     
     return status(201, {
@@ -170,8 +170,8 @@ const app = new Elysia({ precompile: true })
         value: refreshToken,
         httpOnly: true,
         maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "strict"
+        secure: true,
+        sameSite: "none"
       })
       
       return {
@@ -218,8 +218,8 @@ const app = new Elysia({ precompile: true })
         value: refreshToken,
         httpOnly: true,
         maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "strict"
+        secure: true,
+        sameSite: "none"
       })
       
       return {
