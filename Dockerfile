@@ -7,10 +7,12 @@ WORKDIR /usr/src/app
 COPY package.json ./
 COPY src ./
 
-RUN bun install
+RUN bun install --frozen-lockfile
 
 COPY . .
 
+RUN bun build-main
+
 EXPOSE 3000
 
-CMD ["bun", "run", "src/index.ts"]
+CMD ["./server"]

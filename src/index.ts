@@ -37,7 +37,7 @@ mqttClient.on("error", (error) => {
   console.error("Error connecting to MQTT broker:", error);
 });
 
-const app = new Elysia({ precompile: true })
+new Elysia({ precompile: true })
   .use(cors({
     origin: ["http://localhost:5173", "https://flare.nguyenan-study.workers.dev"],
     credentials: true,
@@ -185,15 +185,15 @@ const app = new Elysia({ precompile: true })
     }
   })
   .get("/me", async ({ headers, access_token, refresh_token, cookie, status }) => {
-    const token = headers["authorization"]?.split(" ")[1];
-    if (!token || !token.startsWith("Bearer "))
+    const token = headers["authorization"]?.split(" ");
+    if (!token || token.length !== 2 || token[0] !== "Bearer")
       return status(401, "Invalid access token");
 
     try {
-      let user = await access_token.verify(token);
+      let user = await access_token.verify(token[1]);
       if (user)
         return {
-          access_token: token,
+          access_token: token[1],
           user
         };
       
