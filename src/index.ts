@@ -1,14 +1,18 @@
 import mqtt from "mqtt";
 import { jwt } from "@elysiajs/jwt";
 import { cors } from "@elysiajs/cors";
-import { drizzle } from "drizzle-orm/postgres-js";
+import { drizzle } from "drizzle-orm/bun-sql";
 import { Elysia, t } from "elysia";
+import { createHash } from "crypto";
+import { refreshTokensTable } from "./db/schema";
 import { authenticateUser, createUser } from "./auth";
 import { getAllReadings, getReadingsOf, insertReading } from "./readings";
+import { eq } from "drizzle-orm";
 
 
 export const db = drizzle(process.env.DATABASE_URL!)
 
+const refreshHashSecret = process.env.REFRESH_HASH_SECRET!, refreshExpiredTime = Number(process.env.REFRESH_EXPIRATION_TIME!);
 const mqttClient = mqtt.connect({
   host: process.env.MQTT_CLUSTER_URL,
   username: process.env.MQTT_USERNAME,
@@ -17,11 +21,10 @@ const mqttClient = mqtt.connect({
   protocol: "mqtts"
 });
 
-mqttClient.on("connect", () => {
-  console.log("Connected to MQTT broker");
-});
+mqttClient.on("error", error => console.error("Error connecting to MQTT broker:", error));
+mqttClient.on("connect", () => console.log("Connected to MQTT broker"));
 
-mqttClient.on("message", async (_, message) => {
+mqttClient.on("message", (_, message) => {
   const [user_id, t, h, room] = message.toString().split("|");
   insertReading({
     user_id: Number(user_id),
@@ -33,9 +36,6 @@ mqttClient.on("message", async (_, message) => {
 
 mqttClient.subscribe("pi/readings");
 
-mqttClient.on("error", (error) => {
-  console.error("Error connecting to MQTT broker:", error);
-});
 
 new Elysia({ precompile: true })
   .use(cors({
@@ -49,20 +49,11 @@ new Elysia({ precompile: true })
     exp: process.env.JWT_EXPIRATION,
     schema: t.Object({
       id: t.Number(),
-      username: t.String(),
-    })
-  }))
-  .use(jwt({
-    name: "refresh_token",
-    secret: process.env.REFRESH_JWT_SECRET!,
-    exp: process.env.REFRESH_JWT_EXPIRATION,
-    schema: t.Object({
-      id: t.Number(),
-      username: t.String(),
+      username: t.String()
     })
   }))
 
-  .post("/login", async ({ access_token, refresh_token, cookie, body, status }) => {
+  .post("/login", async ({ access_token, cookie, body, status }) => {
     const { username, password } = body;
     const user = await authenticateUser(username, password)
     
@@ -71,34 +62,38 @@ new Elysia({ precompile: true })
     if (user === true)
       return status(400, "Invalid credentials");
     
-    const payload = {
+    const refreshToken = crypto.randomUUID();
+    const accessToken = await access_token.sign({
       id: user.id,
-      username: username
-    }
-    const [accessToken, refreshToken] = await Promise.all([
-      access_token.sign(payload),
-      refresh_token.sign(payload)
-    ]);
+      username
+    });
     
+    const refreshTokenHash = createHash("sha256").update(refreshHashSecret + refreshToken).digest("hex");
+    db.insert(refreshTokensTable).values({
+      user_id: user.id,
+      token_hash: refreshTokenHash,
+      username
+    });
+
     cookie["refresh_token"].set({
       value: refreshToken,
       httpOnly: true,
-      maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
+      maxAge: Number(process.env.REFRESH_EXPIRATION_SECONDS),
       secure: true,
       sameSite: "none"
     })
     
     return {
       access_token: accessToken,
-      user: payload
+      user_id: user.id
     }
   }, {
     body: t.Object({
       username: t.String(),
-      password: t.String(),
+      password: t.String()
     })
   })
-  .post("/signup", async ({ body, status, cookie, access_token, refresh_token }) => {
+  .post("/signup", async ({ body, status, cookie, access_token }) => {
     const { username, password } = body;
     const user = await createUser(username, password)
     
@@ -107,32 +102,35 @@ new Elysia({ precompile: true })
     if (user === true)
       return status(409, "User already exists");
     
-    const payload = {
+    const refreshToken = crypto.randomUUID();
+    const accessToken = await access_token.sign({
       id: user.id,
       username
-    }
+    });
     
-    const [accessToken, refreshToken] = await Promise.all([
-      access_token.sign(payload),
-      refresh_token.sign(payload)
-    ]);
+    const refreshTokenHash = createHash("sha256").update(refreshHashSecret + refreshToken).digest("hex");
+    db.insert(refreshTokensTable).values({
+      user_id: user.id,
+      token_hash: refreshTokenHash,
+      username
+    });
     
     cookie["refresh_token"].set({
       value: refreshToken,
       httpOnly: true,
-      maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
+      maxAge: Number(process.env.REFRESH_EXPIRATION_SECONDS),
       secure: true,
       sameSite: "none"
     })
     
     return status(201, {
       access_token: accessToken,
-      user: payload
+      user_id: user.id
     })
   }, {
     body: t.Object({
       username: t.String(),
-      password: t.String(),
+      password: t.String()
     })
   })
   .post("/pi/login", async ({ body }) => {
@@ -145,31 +143,56 @@ new Elysia({ precompile: true })
     })
   })
   .post("/logout", async ({ cookie }) => {
-    cookie["refresh_token"].remove();
+    const refreshToken = cookie["refresh_token"];
+    if (!refreshToken.value)
+      return;
+    
+    db.delete(refreshTokensTable)
+      .where(eq(
+        refreshTokensTable.token_hash,
+        createHash("sha256").update(refreshHashSecret + refreshToken.value).digest("hex")
+      ));
+
+    refreshToken.remove();
   })
-  .post("/refresh", async ({ access_token, refresh_token, cookie, status }) => {
+  .post("/refresh", async ({ access_token, cookie, status }) => {
     try {
       if (!cookie["refresh_token"]?.value)
         return status(400, "Invalid refresh token");
       
-      const user = await refresh_token.verify(cookie["refresh_token"].value);
-      if (user === false)
+      let refreshToken = cookie["refresh_token"].value;
+      const [token] = await db.select({
+        id: refreshTokensTable.id,
+        user_id: refreshTokensTable.user_id,
+        username: refreshTokensTable.username,
+        created_at: refreshTokensTable.created_at
+      })
+        .from(refreshTokensTable)
+        .where(eq(
+          refreshTokensTable.token_hash,
+          createHash("sha256").update(refreshHashSecret + refreshToken).digest("hex")
+        ));
+      
+      if (!token || !refreshTokenCheck(token.created_at))
         return status(400, "Invalid refresh token");
       
       const payload = {
-        id: user.id,
-        username: user.username
+        id: token.user_id,
+        username: token.username
       }
+      const accessToken = await access_token.sign(payload);
       
-      const [accessToken, refreshToken] = await Promise.all([
-        access_token.sign(payload),
-        refresh_token.sign(payload)
-      ]);
+      refreshToken = crypto.randomUUID();
+      const refreshTokenHash = createHash("sha256").update(refreshHashSecret + refreshToken).digest("hex");
+
+      db.update(refreshTokensTable)
+        .set({ created_at: new Date(), token_hash: refreshTokenHash })
+        .where(eq(refreshTokensTable.id, token.id));
       
       cookie["refresh_token"].set({
         value: refreshToken,
         httpOnly: true,
-        maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
+        maxAge: Number(process.env.REFRESH_EXPIRATION_SECONDS),
         secure: true,
         sameSite: "none"
       })
@@ -184,40 +207,55 @@ new Elysia({ precompile: true })
       return status(400, "Invalid refresh token");
     }
   })
-  .get("/me", async ({ headers, access_token, refresh_token, cookie, status }) => {
+  .get("/me", async ({ headers, access_token, cookie, status }) => {
     const token = headers["authorization"]?.split(" ");
     if (!token || token.length !== 2 || token[0] !== "Bearer")
       return status(401, "Invalid access token");
 
     try {
-      let user = await access_token.verify(token[1]);
+      const user = await access_token.verify(token[1]);
       if (user)
         return {
           access_token: token[1],
           user
         };
       
-      if (!cookie["refresh_token"]?.value)
+      const ckRefreshToken = cookie["refresh_token"].value;
+      if (!ckRefreshToken)
         return status(400, "Invalid refresh token");
       
-      user = await refresh_token.verify(cookie["refresh_token"].value);
-      if (user === false)
+      const [rfToken] = await db.select({
+        id: refreshTokensTable.id,
+        user_id: refreshTokensTable.user_id,
+        username: refreshTokensTable.username,
+        created_at: refreshTokensTable.created_at
+      })
+        .from(refreshTokensTable)
+        .where(eq(
+          refreshTokensTable.token_hash,
+          createHash("sha256").update(refreshHashSecret + ckRefreshToken).digest("hex")
+        ));
+      
+      if (!rfToken || !refreshTokenCheck(rfToken.created_at))
         return status(400, "Invalid refresh token");
         
       const payload = {
-        id: user.id,
-        username: user.username
+        id: rfToken.user_id,
+        username: rfToken.username
       }
+      const accessToken = await access_token.sign(payload);
       
-      const [accessToken, refreshToken] = await Promise.all([
-        access_token.sign(payload),
-        refresh_token.sign(payload)
-      ]);
+      const refreshToken = crypto.randomUUID();
+      const refreshTokenHash = createHash("sha256").update(refreshHashSecret + refreshToken).digest("hex");
+
+      db.update(refreshTokensTable)
+        .set({ created_at: new Date(), token_hash: refreshTokenHash })
+        .where(eq(refreshTokensTable.id, rfToken.id));
       
       cookie["refresh_token"].set({
         value: refreshToken,
         httpOnly: true,
-        maxAge: Number(process.env.REFRESH_JWT_EXPIRATION_NUM),
+        maxAge: Number(process.env.REFRESH_EXPIRATION_SECONDS),
         secure: true,
         sameSite: "none"
       })
@@ -229,7 +267,7 @@ new Elysia({ precompile: true })
     }
     catch (error) {
       console.error(error);
-      return status(400, "Invalid access token");
+      return status(401, "Invalid access token");
     }
   })
   .derive(async ({ headers, access_token }) => {
@@ -252,13 +290,13 @@ new Elysia({ precompile: true })
 
   .get("/readings", async ({ user, status }) => {
     if (!user)
-      return status(400, "Invalid access token");
+      return status(401, "Invalid access token");
 
     return await getAllReadings({ user_id: user.id });
   })
   .get("/readings/:room", async ({ params, user, status }) => {
     if (!user)
-      return status(400, "Invalid access token");
+      return status(401, "Invalid access token");
     
     return await getReadingsOf({ user_id: user.id, room: params.room });
   }, {
@@ -266,12 +304,28 @@ new Elysia({ precompile: true })
       room: t.String()
     })
   })
-  .post("/readings", async ({ body }) => await insertReading(body), {
+  .post("/readings", async ({ body, user, status }) => {
+    if (!user)
+      return status(401, "Invalid access token");
+    
+    await insertReading({ user_id: user.id, ...body });
+    return status(201, "Reading added successfully");
+  }, {
     body: t.Object({
-      user_id: t.Number(),
       temperature: t.Number(),
       humidity: t.Number(),
       room: t.String()
     })
   })
-  .listen({ hostname: "0.0.0.0", port: 3000 });
+  .listen({ port: 3000 });
+  
+function refreshTokenCheck(tokenDate: Date) {
+  const now = new Date();
+  if (tokenDate > now)
+    return false;
+
+  const refreshExpiredDate = new Date(now);
+  refreshExpiredDate.setDate(now.getDate() - refreshExpiredTime);
+
+  return tokenDate >= refreshExpiredDate;
+}

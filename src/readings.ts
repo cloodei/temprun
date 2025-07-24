@@ -11,12 +11,10 @@ export async function getAllReadings({ user_id }: { user_id: number }) {
     created_at: readingsTable.created_at
   })
     .from(readingsTable)
-    .where(
-      and(
-        eq(readingsTable.user_id, user_id),
-        gte(readingsTable.created_at, sql`NOW() - INTERVAL '30 DAY'`)
-      )
-    )
+    .where(and(
+      eq(readingsTable.user_id, user_id),
+      gte(readingsTable.created_at, sql`NOW() - INTERVAL '30 DAY'`)
+    ))
 
   return data;
 }
@@ -28,13 +26,11 @@ export async function getReadingsOf({ user_id, room }: { user_id: number, room: 
     created_at: readingsTable.created_at
   })
     .from(readingsTable)
-    .where(
-      and(
-        eq(readingsTable.user_id, user_id),
-        eq(readingsTable.room, room),
-        gte(readingsTable.created_at, sql`NOW() - INTERVAL '30 DAY'`)
-      )
-    )
+    .where(and(
+      eq(readingsTable.user_id, user_id),
+      eq(readingsTable.room, room),
+      gte(readingsTable.created_at, sql`NOW() - INTERVAL '30 DAY'`)
+    ))
 
   return data;
 }

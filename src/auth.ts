@@ -5,20 +5,24 @@ import { db } from "."
 import { usersTable } from "./db/schema"
 
 export async function findUser(username: string) {
-  const user = await db.select({ id: usersTable.id, password: usersTable.password }).from(usersTable).where(eq(usersTable.username, username))
-  return user
+  try {
+    return await db.select({ id: usersTable.id, password: usersTable.password }).from(usersTable).where(eq(usersTable.username, username))
+  }
+  catch (error) {
+    return []
+  }
 }
 
 export async function authenticateUser(username: string, password: string) {
-  const user = await findUser(username)
-  if (!user.length)
+  const [user] = await findUser(username)
+  if (!user)
     return false
 
-  const isPasswordValid = await bcrypt.compare(password, user[0].password)
+  const isPasswordValid = await bcrypt.compare(password, user.password)
   if (!isPasswordValid)
     return true
 
-  return user[0]
+  return user
 }
 
 export async function createUser(username: string, password: string) {

@@ -22,10 +22,12 @@
     "postgres": "^3.4.7"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250719.0",
     "@types/bcrypt": "^5.0.2",
     "bun-types": "latest",
     "drizzle-kit": "^0.31.4",
-    "tsx": "^4.20.3"
+    "tsx": "^4.20.3",
+    "wrangler": "^4.25.0"
   },
   "module": "src/index.js"
 }
