@@ -6,7 +6,17 @@ import { usersTable } from "./db/schema"
 
 export async function findUser(username: string) {
   try {
-    return await db.select({ id: usersTable.id, password: usersTable.password }).from(usersTable).where(eq(usersTable.username, username))
+    const data = await db.select({
+      id: usersTable.id,
+      password: usersTable.password
+    })
+      .from(usersTable)
+      .where(eq(
+        usersTable.username,
+        username
+      ))
+
+    return data
   }
   catch (error) {
     return []
@@ -29,7 +39,17 @@ export async function createUser(username: string, password: string) {
   const hashedPassword = await bcrypt.hash(password, 10)
 
   try {
-    const [user] = await db.insert(usersTable).values({ username, password: hashedPassword }).returning({ id: usersTable.id })
+    const [user] = await db.insert(usersTable)
+      .values({
+        username,
+        password: hashedPassword
+      })
+      .returning({
+        id: usersTable.id,
+        username: usersTable.username,
+        password: usersTable.password
+      })
+      
     return user
   }
   catch (error) {

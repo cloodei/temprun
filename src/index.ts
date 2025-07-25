@@ -1,4 +1,5 @@
 import mqtt from "mqtt";
+import { eq } from "drizzle-orm";
 import { jwt } from "@elysiajs/jwt";
 import { cors } from "@elysiajs/cors";
 import { drizzle } from "drizzle-orm/bun-sql";
@@ -7,7 +8,6 @@ import { createHash } from "crypto";
 import { refreshTokensTable } from "./db/schema";
 import { authenticateUser, createUser } from "./auth";
 import { getAllReadings, getReadingsOf, insertReading } from "./readings";
-import { eq } from "drizzle-orm";
 
 
 export const db = drizzle(process.env.DATABASE_URL!)
@@ -21,8 +21,8 @@ const mqttClient = mqtt.connect({
   protocol: "mqtts"
 });
 
+mqttClient.on("connect",  () => console.log("Connected to MQTT broker"));
 mqttClient.on("error", error => console.error("Error connecting to MQTT broker:", error));
-mqttClient.on("connect", () => console.log("Connected to MQTT broker"));
 
 mqttClient.on("message", (_, message) => {
   const [user_id, t, h, room] = message.toString().split("|");
@@ -292,7 +292,7 @@ new Elysia({ precompile: true })
     if (!user)
       return status(401, "Invalid access token");
 
-    return await getAllReadings({ user_id: user.id });
+    return await getAllReadings(user.id);
   })
   .get("/readings/:room", async ({ params, user, status }) => {
     if (!user)

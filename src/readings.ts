@@ -1,9 +1,9 @@
 import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from ".";
-import { InsertPayload } from "./types";
 import { readingsTable } from "./db/schema";
+import { type InsertPayload } from "./types";
 
-export async function getAllReadings({ user_id }: { user_id: number }) {
+export async function getAllReadings(user_id: number) {
   const data = await db.select({
     temperature: readingsTable.temperature,
     humidity: readingsTable.humidity,
@@ -35,6 +35,6 @@ export async function getReadingsOf({ user_id, room }: { user_id: number, room: 
   return data;
 }
 
-export async function insertReading({ user_id, temperature, humidity, room }: InsertPayload) {
-  await db.insert(readingsTable).values({ user_id, temperature, humidity, room })
+export async function insertReading(payload: InsertPayload) {
+  await db.insert(readingsTable).values(payload)
 }
