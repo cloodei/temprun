@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt"
 import postgres from "postgres";
 import { eq } from "drizzle-orm";
+import { DrizzleQueryError } from "drizzle-orm/errors/index";
 import { db } from "."
 import { usersTable } from "./db/schema"
 
@@ -53,9 +54,11 @@ export async function createUser(username: string, password: string) {
     return user
   }
   catch (error) {
-    if (error instanceof postgres.PostgresError && error.code === "23505")
+    const err = error as DrizzleQueryError
+    if (err.cause instanceof postgres.PostgresError && (err.cause as any).errno === "23505")
       return true
     
+    console.error("Error creating user:", error)
     return false
   }
 }

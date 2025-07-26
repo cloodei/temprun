@@ -4,13 +4,13 @@ import { jwt } from "@elysiajs/jwt";
 import { cors } from "@elysiajs/cors";
 import { drizzle } from "drizzle-orm/bun-sql";
 import { Elysia, t } from "elysia";
-import { createHash } from "crypto";
 import { refreshTokensTable } from "./db/schema";
 import { authenticateUser, createUser } from "./auth";
 import { getAllReadings, getReadingsOf, insertReading } from "./readings";
 
 
 export const db = drizzle(process.env.DATABASE_URL!)
+db.execute('SELECT 1 FROM "refresh_tokens" WHERE "id"=1')
 
 const refreshHashSecret = process.env.REFRESH_HASH_SECRET!, refreshExpiredTime = Number(process.env.REFRESH_EXPIRATION_TIME!);
 const mqttClient = mqtt.connect({
@@ -36,10 +36,11 @@ mqttClient.on("message", (_, message) => {
 
 mqttClient.subscribe("pi/readings");
 
+const hasher = new Bun.CryptoHasher("sha256");
 
 new Elysia({ precompile: true })
   .use(cors({
-    origin: ["http://localhost:5173", "https://flare.nguyenan-study.workers.dev"],
+    origin: ["https://flare.nguyenan-study.workers.dev", "http://localhost:5173"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"]
   }))
@@ -68,7 +69,7 @@ new Elysia({ precompile: true })
       username
     });
     
-    const refreshTokenHash = createHash("sha256").update(refreshHashSecret + refreshToken).digest("hex");
+    const refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
     db.insert(refreshTokensTable).values({
       user_id: user.id,
       token_hash: refreshTokenHash,
@@ -108,7 +109,7 @@ new Elysia({ precompile: true })
       username
     });
     
-    const refreshTokenHash = createHash("sha256").update(refreshHashSecret + refreshToken).digest("hex");
+    const refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
     db.insert(refreshTokensTable).values({
       user_id: user.id,
       token_hash: refreshTokenHash,
@@ -142,6 +143,9 @@ new Elysia({ precompile: true })
       password: t.String()
     })
   })
+  .get("/logoff", async ({ cookie }) => {
+    cookie["refresh_token"]?.remove();
+  })
   .post("/logout", async ({ cookie }) => {
     const refreshToken = cookie["refresh_token"];
     if (!refreshToken.value)
@@ -150,12 +154,12 @@ new Elysia({ precompile: true })
     db.delete(refreshTokensTable)
       .where(eq(
         refreshTokensTable.token_hash,
-        createHash("sha256").update(refreshHashSecret + refreshToken.value).digest("hex")
+        hasher.update(refreshHashSecret + refreshToken.value).digest("hex")
       ));
 
-    refreshToken.remove();
+    refreshToken?.remove();
   })
-  .post("/refresh", async ({ access_token, cookie, status }) => {
+  .get("/refresh", async ({ access_token, cookie, status }) => {
     try {
       if (!cookie["refresh_token"]?.value)
         return status(400, "Invalid refresh token");
@@ -170,7 +174,7 @@ new Elysia({ precompile: true })
         .from(refreshTokensTable)
         .where(eq(
           refreshTokensTable.token_hash,
-          createHash("sha256").update(refreshHashSecret + refreshToken).digest("hex")
+          hasher.update(refreshHashSecret + refreshToken).digest("hex")
         ));
       
       if (!token || !refreshTokenCheck(token.created_at))
@@ -183,7 +187,7 @@ new Elysia({ precompile: true })
       const accessToken = await access_token.sign(payload);
       
       refreshToken = crypto.randomUUID();
-      const refreshTokenHash = createHash("sha256").update(refreshHashSecret + refreshToken).digest("hex");
+      const refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
 
       db.update(refreshTokensTable)
         .set({ created_at: new Date(), token_hash: refreshTokenHash })
@@ -233,7 +237,7 @@ new Elysia({ precompile: true })
         .from(refreshTokensTable)
         .where(eq(
           refreshTokensTable.token_hash,
-          createHash("sha256").update(refreshHashSecret + ckRefreshToken).digest("hex")
+          hasher.update(refreshHashSecret + ckRefreshToken).digest("hex")
         ));
       
       if (!rfToken || !refreshTokenCheck(rfToken.created_at))
@@ -246,7 +250,7 @@ new Elysia({ precompile: true })
       const accessToken = await access_token.sign(payload);
       
       const refreshToken = crypto.randomUUID();
-      const refreshTokenHash = createHash("sha256").update(refreshHashSecret + refreshToken).digest("hex");
+      const refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
 
       db.update(refreshTokensTable)
         .set({ created_at: new Date(), token_hash: refreshTokenHash })
@@ -317,8 +321,8 @@ new Elysia({ precompile: true })
       room: t.String()
     })
   })
-  .listen({ port: 3000 });
-  
+  .listen({ port: 3000, hostname: "0.0.0.0" });
+
 function refreshTokenCheck(tokenDate: Date) {
   const now = new Date();
   if (tokenDate > now)
