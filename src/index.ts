@@ -1,48 +1,50 @@
 import mqtt from "mqtt";
+import bcrypt from "bcrypt";
 import { eq } from "drizzle-orm";
+import { sql } from "bun";
 import { jwt } from "@elysiajs/jwt";
 import { cors } from "@elysiajs/cors";
-import { drizzle } from "drizzle-orm/bun-sql";
+import { drizzle } from "drizzle-orm/postgres-js";
 import { Elysia, t } from "elysia";
-import { refreshTokensTable } from "./db/schema";
-import { authenticateUser, createUser } from "./auth";
+import { refreshTokensTable, usersTable } from "./db/schema";
 import { getAllReadings, getReadingsOf, insertReading } from "./readings";
 
 
-export const db = drizzle(process.env.DATABASE_URL!)
-db.execute('SELECT 1 FROM "refresh_tokens" WHERE "id"=1')
+// const mqttClient = mqtt.connect({
+//   host: process.env.MQTT_CLUSTER_URL,
+//   username: process.env.MQTT_USERNAME,
+//   password: process.env.MQTT_PASSWORD,
+//   port: 8883,
+//   protocol: "mqtts"
+// });
+
+// mqttClient.on("connect",  () => console.log("Connected to MQTT broker"));
+// mqttClient.on("error", error => console.error("Error connecting to MQTT broker:", error));
+
+// mqttClient.on("message", (_, message) => {
+//   const [user_id, t, h, room] = message.toString().split("|");
+//   insertReading({
+//     user_id: Number(user_id),
+//     temperature: Number(t),
+//     humidity: Number(h),
+//     room
+//   });
+// });
+
+// mqttClient.subscribe("pi/readings");
 
 const refreshHashSecret = process.env.REFRESH_HASH_SECRET!, refreshExpiredTime = Number(process.env.REFRESH_EXPIRATION_TIME!);
-const mqttClient = mqtt.connect({
-  host: process.env.MQTT_CLUSTER_URL,
-  username: process.env.MQTT_USERNAME,
-  password: process.env.MQTT_PASSWORD,
-  port: 8883,
-  protocol: "mqtts"
-});
-
-mqttClient.on("connect",  () => console.log("Connected to MQTT broker"));
-mqttClient.on("error", error => console.error("Error connecting to MQTT broker:", error));
-
-mqttClient.on("message", (_, message) => {
-  const [user_id, t, h, room] = message.toString().split("|");
-  insertReading({
-    user_id: Number(user_id),
-    temperature: Number(t),
-    humidity: Number(h),
-    room
-  });
-});
-
-mqttClient.subscribe("pi/readings");
-
 const hasher = new Bun.CryptoHasher("sha256");
+
+export const db = drizzle(process.env.DATABASE_URL!)
+sql`SELECT 1 FROM "refresh_tokens" WHERE "id"=1`
+db.execute('SELECT 1 FROM "refresh_tokens" WHERE "id"=1')
 
 new Elysia({ precompile: true })
   .use(cors({
-    origin: ["https://flare.nguyenan-study.workers.dev", "http://localhost:5173"],
-    credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization"]
+    maxAge: 60,
+    origin: process.env.ORIGIN!,
+    allowedHeaders: "Content-Type, Authorization"
   }))
   .use(jwt({
     name: "access_token",
@@ -53,7 +55,12 @@ new Elysia({ precompile: true })
       username: t.String()
     })
   }))
-
+  .onAfterHandle(({ set }) => {
+    set.headers["access-control-max-age"] = "60";
+    set.headers["access-control-allow-origin"] = process.env.ORIGIN!;
+    set.headers["access-control-allow-headers"] = "Content-Type, Authorization";
+  })
+  
   .post("/login", async ({ access_token, cookie, body, status }) => {
     const { username, password } = body;
     const user = await authenticateUser(username, password)
@@ -165,17 +172,8 @@ new Elysia({ precompile: true })
         return status(400, "Invalid refresh token");
       
       let refreshToken = cookie["refresh_token"].value;
-      const [token] = await db.select({
-        id: refreshTokensTable.id,
-        user_id: refreshTokensTable.user_id,
-        username: refreshTokensTable.username,
-        created_at: refreshTokensTable.created_at
-      })
-        .from(refreshTokensTable)
-        .where(eq(
-          refreshTokensTable.token_hash,
-          hasher.update(refreshHashSecret + refreshToken).digest("hex")
-        ));
+      let refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
+      const [token] = await sql`SELECT id, user_id, username, created_at FROM "refresh_tokens" WHERE token_hash=${refreshTokenHash}`;
       
       if (!token || !refreshTokenCheck(token.created_at))
         return status(400, "Invalid refresh token");
@@ -187,7 +185,7 @@ new Elysia({ precompile: true })
       const accessToken = await access_token.sign(payload);
       
       refreshToken = crypto.randomUUID();
-      const refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
+      refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
 
       db.update(refreshTokensTable)
         .set({ created_at: new Date(), token_hash: refreshTokenHash })
@@ -228,18 +226,8 @@ new Elysia({ precompile: true })
       if (!ckRefreshToken)
         return status(400, "Invalid refresh token");
       
-      const [rfToken] = await db.select({
-        id: refreshTokensTable.id,
-        user_id: refreshTokensTable.user_id,
-        username: refreshTokensTable.username,
-        created_at: refreshTokensTable.created_at
-      })
-        .from(refreshTokensTable)
-        .where(eq(
-          refreshTokensTable.token_hash,
-          hasher.update(refreshHashSecret + ckRefreshToken).digest("hex")
-        ));
-      
+      let refreshTokenHash = hasher.update(refreshHashSecret + ckRefreshToken).digest("hex");
+      const [rfToken] = await sql`SELECT id, user_id, username, created_at FROM "refresh_tokens" WHERE token_hash=${refreshTokenHash}`;
       if (!rfToken || !refreshTokenCheck(rfToken.created_at))
         return status(400, "Invalid refresh token");
         
@@ -250,7 +238,7 @@ new Elysia({ precompile: true })
       const accessToken = await access_token.sign(payload);
       
       const refreshToken = crypto.randomUUID();
-      const refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
+      refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
 
       db.update(refreshTokensTable)
         .set({ created_at: new Date(), token_hash: refreshTokenHash })
@@ -321,7 +309,8 @@ new Elysia({ precompile: true })
       room: t.String()
     })
   })
-  .listen({ port: 3000, hostname: "0.0.0.0" });
+  .listen({ port: 3000 });
+
 
 function refreshTokenCheck(tokenDate: Date) {
   const now = new Date();
@@ -332,4 +321,49 @@ function refreshTokenCheck(tokenDate: Date) {
   refreshExpiredDate.setDate(now.getDate() - refreshExpiredTime);
 
   return tokenDate >= refreshExpiredDate;
+}
+
+async function authenticateUser(username: string, password: string) {
+  let user: { id: number, password: string } | undefined;
+  try {
+    user = (await sql`SELECT id, password FROM users WHERE username='${username}'`)[0];
+  }
+  catch (err) {
+    console.error(err);
+    return false;
+  }
+
+  if (!user)
+    return false;
+
+  if (!await bcrypt.compare(password, user.password))
+    return true;
+
+  return user;
+}
+
+async function createUser(username: string, password: string) {
+  const hashedPassword = await bcrypt.hash(password, 10)
+
+  try {
+    const [user] = await db.insert(usersTable)
+      .values({
+        username,
+        password: hashedPassword
+      })
+      .returning({
+        id: usersTable.id,
+        username: usersTable.username,
+        password: usersTable.password
+      })
+      
+    return user
+  }
+  catch (err: any) {
+    if (err.cause.name === "PostgresError" && err.cause.errno === "23505")
+      return true
+    
+    console.error("\nError creating user:", err)
+    return false
+  }
 }

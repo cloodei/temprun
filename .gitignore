@@ -20,6 +20,7 @@
 # misc
 .DS_Store
 *.pem
+try.ts
 
 # debug
 npm-debug.log*
