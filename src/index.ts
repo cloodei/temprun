@@ -1,13 +1,16 @@
 import mqtt from "mqtt";
-import bcrypt from "bcrypt";
-import { eq } from "drizzle-orm";
-import { sql } from "bun";
 import { jwt } from "@elysiajs/jwt";
 import { cors } from "@elysiajs/cors";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { Elysia, t } from "elysia";
-import { refreshTokensTable, usersTable } from "./db/schema";
+import { authenticateUser, createUser } from "./auth";
 import { getAllReadings, getReadingsOf, insertReading } from "./readings";
+import {
+  deleteRefreshByTokenHash,
+  insertRefresh,
+  updateRefresh,
+  selectRefresh,
+} from "./db/db";
+import { hashToken, refreshTokenCheck } from "./utils";
 
 
 // const mqttClient = mqtt.connect({
@@ -33,16 +36,9 @@ import { getAllReadings, getReadingsOf, insertReading } from "./readings";
 
 // mqttClient.subscribe("pi/readings");
 
-const refreshHashSecret = process.env.REFRESH_HASH_SECRET!, refreshExpiredTime = Number(process.env.REFRESH_EXPIRATION_TIME!);
-const hasher = new Bun.CryptoHasher("sha256");
-
-export const db = drizzle(process.env.DATABASE_URL!)
-sql`SELECT 1 FROM "refresh_tokens" WHERE "id"=1`
-db.execute('SELECT 1 FROM "refresh_tokens" WHERE "id"=1')
-
 new Elysia({ precompile: true })
   .use(cors({
-    maxAge: 60,
+    maxAge: 120,
     origin: process.env.ORIGIN!,
     allowedHeaders: "Content-Type, Authorization"
   }))
@@ -56,7 +52,7 @@ new Elysia({ precompile: true })
     })
   }))
   .onAfterHandle(({ set }) => {
-    set.headers["access-control-max-age"] = "60";
+    set.headers["access-control-max-age"] = "120";
     set.headers["access-control-allow-origin"] = process.env.ORIGIN!;
     set.headers["access-control-allow-headers"] = "Content-Type, Authorization";
   })
@@ -76,10 +72,9 @@ new Elysia({ precompile: true })
       username
     });
     
-    const refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
-    db.insert(refreshTokensTable).values({
+    insertRefresh.execute({
       user_id: user.id,
-      token_hash: refreshTokenHash,
+      token_hash: hashToken(refreshToken),
       username
     });
 
@@ -116,10 +111,9 @@ new Elysia({ precompile: true })
       username
     });
     
-    const refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
-    db.insert(refreshTokensTable).values({
+    insertRefresh.execute({
       user_id: user.id,
-      token_hash: refreshTokenHash,
+      token_hash: hashToken(refreshToken),
       username
     });
     
@@ -150,20 +144,15 @@ new Elysia({ precompile: true })
       password: t.String()
     })
   })
-  .get("/logoff", async ({ cookie }) => {
+  .get("/logoff", ({ cookie }) => {
     cookie["refresh_token"]?.remove();
   })
-  .post("/logout", async ({ cookie }) => {
+  .post("/logout", ({ cookie }) => {
     const refreshToken = cookie["refresh_token"];
     if (!refreshToken.value)
       return;
     
-    db.delete(refreshTokensTable)
-      .where(eq(
-        refreshTokensTable.token_hash,
-        hasher.update(refreshHashSecret + refreshToken.value).digest("hex")
-      ));
-
+    deleteRefreshByTokenHash.execute({ token_hash: hashToken(refreshToken.value) });
     refreshToken?.remove();
   })
   .get("/refresh", async ({ access_token, cookie, status }) => {
@@ -172,8 +161,8 @@ new Elysia({ precompile: true })
         return status(400, "Invalid refresh token");
       
       let refreshToken = cookie["refresh_token"].value;
-      let refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
-      const [token] = await sql`SELECT id, user_id, username, created_at FROM "refresh_tokens" WHERE token_hash=${refreshTokenHash}`;
+      let refreshTokenHash = hashToken(refreshToken);
+      const [token] = await selectRefresh.execute({ token_hash: refreshTokenHash });
       
       if (!token || !refreshTokenCheck(token.created_at))
         return status(400, "Invalid refresh token");
@@ -185,11 +174,12 @@ new Elysia({ precompile: true })
       const accessToken = await access_token.sign(payload);
       
       refreshToken = crypto.randomUUID();
-      refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
+      refreshTokenHash = hashToken(refreshToken);
 
-      db.update(refreshTokensTable)
-        .set({ created_at: new Date(), token_hash: refreshTokenHash })
-        .where(eq(refreshTokensTable.id, token.id));
+      updateRefresh.execute({
+        id: token.id,
+        token_hash: refreshTokenHash
+      });
       
       cookie["refresh_token"].set({
         value: refreshToken,
@@ -226,8 +216,8 @@ new Elysia({ precompile: true })
       if (!ckRefreshToken)
         return status(400, "Invalid refresh token");
       
-      let refreshTokenHash = hasher.update(refreshHashSecret + ckRefreshToken).digest("hex");
-      const [rfToken] = await sql`SELECT id, user_id, username, created_at FROM "refresh_tokens" WHERE token_hash=${refreshTokenHash}`;
+      let refreshTokenHash = hashToken(ckRefreshToken);
+      const [rfToken] = await selectRefresh.execute({ token_hash: refreshTokenHash });
       if (!rfToken || !refreshTokenCheck(rfToken.created_at))
         return status(400, "Invalid refresh token");
         
@@ -238,11 +228,12 @@ new Elysia({ precompile: true })
       const accessToken = await access_token.sign(payload);
       
       const refreshToken = crypto.randomUUID();
-      refreshTokenHash = hasher.update(refreshHashSecret + refreshToken).digest("hex");
+      refreshTokenHash = hashToken(refreshToken);
 
-      db.update(refreshTokensTable)
-        .set({ created_at: new Date(), token_hash: refreshTokenHash })
-        .where(eq(refreshTokensTable.id, rfToken.id));
+      updateRefresh.execute({
+        id: rfToken.id,
+        token_hash: refreshTokenHash
+      });
       
       cookie["refresh_token"].set({
         value: refreshToken,
@@ -300,8 +291,14 @@ new Elysia({ precompile: true })
     if (!user)
       return status(401, "Invalid access token");
     
-    await insertReading({ user_id: user.id, ...body });
-    return status(201, "Reading added successfully");
+    try {
+      await insertReading({ user_id: user.id, ...body });
+      return status(201, "Reading added successfully");
+    }
+    catch (error) {
+      console.error(error);
+      return status(500, "Internal server error");
+    }
   }, {
     body: t.Object({
       temperature: t.Number(),
@@ -311,59 +308,4 @@ new Elysia({ precompile: true })
   })
   .listen({ port: 3000 });
 
-
-function refreshTokenCheck(tokenDate: Date) {
-  const now = new Date();
-  if (tokenDate > now)
-    return false;
-
-  const refreshExpiredDate = new Date(now);
-  refreshExpiredDate.setDate(now.getDate() - refreshExpiredTime);
-
-  return tokenDate >= refreshExpiredDate;
-}
-
-async function authenticateUser(username: string, password: string) {
-  let user: { id: number, password: string } | undefined;
-  try {
-    user = (await sql`SELECT id, password FROM users WHERE username='${username}'`)[0];
-  }
-  catch (err) {
-    console.error(err);
-    return false;
-  }
-
-  if (!user)
-    return false;
-
-  if (!await bcrypt.compare(password, user.password))
-    return true;
-
-  return user;
-}
-
-async function createUser(username: string, password: string) {
-  const hashedPassword = await bcrypt.hash(password, 10)
-
-  try {
-    const [user] = await db.insert(usersTable)
-      .values({
-        username,
-        password: hashedPassword
-      })
-      .returning({
-        id: usersTable.id,
-        username: usersTable.username,
-        password: usersTable.password
-      })
-      
-    return user
-  }
-  catch (err: any) {
-    if (err.cause.name === "PostgresError" && err.cause.errno === "23505")
-      return true
-    
-    console.error("\nError creating user:", err)
-    return false
-  }
-}
+console.log("Server started on port 3000");
