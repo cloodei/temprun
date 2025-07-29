@@ -32,7 +32,7 @@ mqttClient.subscribe("pi/readings");
 new Elysia({ precompile: true })
   .use(cors({
     maxAge: 120,
-    origin: process.env.ORIGIN!,
+    origin: [process.env.CORS_ORIGIN!, process.env.LOCAL_ORIGIN!],
     allowedHeaders: "Content-Type, Authorization"
   }))
   .use(jwt({
