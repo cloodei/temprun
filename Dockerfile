@@ -1,4 +1,4 @@
-FROM oven/bun:latest
+FROM oven/bun:1.2.17
 
 COPY package.json ./
 COPY src ./
