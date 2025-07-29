@@ -30,7 +30,7 @@ export async function createUser(username: string, password: string) {
     return user
   }
   catch (err: any) {
-    if (err.cause.name === "PostgresError" && err.cause.errno === "23505")
+    if (err.cause.name === "PostgresError" && err.cause.code === "23505")
       return true
     
     console.error("\nError creating user:", err)

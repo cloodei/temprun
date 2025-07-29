@@ -3,38 +3,33 @@ import { jwt } from "@elysiajs/jwt";
 import { cors } from "@elysiajs/cors";
 import { Elysia, t } from "elysia";
 import { authenticateUser, createUser } from "./auth";
-import { getAllReadings, getReadingsOf, insertReading } from "./readings";
-import {
-  deleteRefreshByTokenHash,
-  insertRefresh,
-  updateRefresh,
-  selectRefresh,
-} from "./db/db";
 import { hashToken, refreshTokenCheck } from "./utils";
+import { getAllReadings, getReadingsOf, insertReading } from "./readings";
+import { deleteRefreshByTokenHash, insertRefresh, updateRefresh, selectRefresh } from "./db/db";
 
 
-// const mqttClient = mqtt.connect({
-//   host: process.env.MQTT_CLUSTER_URL,
-//   username: process.env.MQTT_USERNAME,
-//   password: process.env.MQTT_PASSWORD,
-//   port: 8883,
-//   protocol: "mqtts"
-// });
+const mqttClient = mqtt.connect({
+  host: process.env.MQTT_CLUSTER_URL,
+  username: process.env.MQTT_USERNAME,
+  password: process.env.MQTT_PASSWORD,
+  port: 8883,
+  protocol: "mqtts"
+});
 
-// mqttClient.on("connect",  () => console.log("Connected to MQTT broker"));
-// mqttClient.on("error", error => console.error("Error connecting to MQTT broker:", error));
+mqttClient.on("connect",  () => console.log("Connected to MQTT broker"));
+mqttClient.on("error", error => console.error("Error connecting to MQTT broker:", error));
 
-// mqttClient.on("message", (_, message) => {
-//   const [user_id, t, h, room] = message.toString().split("|");
-//   insertReading({
-//     user_id: Number(user_id),
-//     temperature: Number(t),
-//     humidity: Number(h),
-//     room
-//   });
-// });
+mqttClient.on("message", (_, message) => {
+  const [user_id, t, h, room] = message.toString().split("|");
+  insertReading({
+    user_id: Number(user_id),
+    temperature: Number(t),
+    humidity: Number(h),
+    room
+  });
+});
 
-// mqttClient.subscribe("pi/readings");
+mqttClient.subscribe("pi/readings");
 
 new Elysia({ precompile: true })
   .use(cors({
@@ -306,6 +301,4 @@ new Elysia({ precompile: true })
       room: t.String()
     })
   })
-  .listen({ port: 3000 });
-
-console.log("Server started on port 3000");
+  .listen({ port: 3000 })

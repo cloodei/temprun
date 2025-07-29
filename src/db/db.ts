@@ -14,7 +14,6 @@ const db = drizzle(process.env.DATABASE_URL!, {
   })
 })
 
-
 const selectUser = db.select({
   id: usersTable.id,
   password: usersTable.password
