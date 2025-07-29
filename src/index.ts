@@ -8,16 +8,14 @@ import { getAllReadings, getReadingsOf, insertReading } from "./readings";
 import { deleteRefreshByTokenHash, insertRefresh, updateRefresh, selectRefresh } from "./db/db";
 
 
-const mqttClient = mqtt.connect({
-  host: process.env.MQTT_CLUSTER_URL,
-  username: process.env.MQTT_USERNAME,
-  password: process.env.MQTT_PASSWORD,
-  port: 8883,
-  protocol: "mqtts"
+const mqttClient = mqtt.connect(process.env.MQTT_CLUSTER_URL!, {
+  protocol: "mqtts",
+  username: process.env.MQTT_USERNAME!,
+  password: process.env.MQTT_PASSWORD!
 });
 
-mqttClient.on("connect",  () => console.log("Connected to MQTT broker"));
 mqttClient.on("error", error => console.error("Error connecting to MQTT broker:", error));
+mqttClient.on("connect",  () => console.log("Connected to MQTT broker"));
 
 mqttClient.on("message", (_, message) => {
   const [user_id, t, h, room] = message.toString().split("|");

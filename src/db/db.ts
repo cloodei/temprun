@@ -3,16 +3,17 @@ import { upstashCache } from "drizzle-orm/cache/upstash";
 import { eq, and, gte, sql } from "drizzle-orm";
 import { usersTable, refreshTokensTable, readingsTable } from "./schema";
 
-const db = drizzle(process.env.DATABASE_URL!, {
-  cache: upstashCache({
-    url: "",
-    token: "",
-    global: true,
-    config: {
-      ex: 60 * 60 * 24
-    }
-  })
-})
+// const db = drizzle(process.env.NILE_URL!, {
+//   cache: upstashCache({
+//     url: process.env.UPSTASH_REDIS_REST_URL!,
+//     token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+//     global: true,
+//     config: {
+//       ex: 60 * 60 * 24
+//     }
+//   })
+// })
+const db = drizzle(process.env.NILE_URL!)
 
 const selectUser = db.select({
   id: usersTable.id,
