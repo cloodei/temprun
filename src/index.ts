@@ -32,7 +32,7 @@ mqttClient.subscribe("pi/readings");
 new Elysia({ precompile: true })
   .use(cors({
     maxAge: 120,
-    origin: [process.env.CORS_ORIGIN!, process.env.LOCAL_ORIGIN!],
+    origin: process.env.CORS_ORIGIN!,
     allowedHeaders: "Content-Type, Authorization"
   }))
   .use(jwt({
@@ -46,7 +46,7 @@ new Elysia({ precompile: true })
   }))
   .onAfterHandle(({ set }) => {
     set.headers["access-control-max-age"] = "120";
-    set.headers["access-control-allow-origin"] = process.env.ORIGIN!;
+    set.headers["access-control-allow-origin"] = process.env.CORS_ORIGIN!;
     set.headers["access-control-allow-headers"] = "Content-Type, Authorization";
   })
   
