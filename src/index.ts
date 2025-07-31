@@ -29,7 +29,19 @@ mqttClient.on("message", (_, message) => {
 
 mqttClient.subscribe("pi/readings");
 
+const pi = new Elysia()
+  .post("/pi/login", async ({ body }) => {
+    const { username, password } = body;
+    return await authenticateUser(username, password)
+  }, {
+    body: t.Object({
+      username: t.String(),
+      password: t.String()
+    })
+  })
+
 new Elysia({ precompile: true })
+  .use(pi)
   .use(cors({
     maxAge: 120,
     origin: process.env.CORS_ORIGIN!,
@@ -122,15 +134,6 @@ new Elysia({ precompile: true })
       access_token: accessToken,
       user_id: user.id
     })
-  }, {
-    body: t.Object({
-      username: t.String(),
-      password: t.String()
-    })
-  })
-  .post("/pi/login", async ({ body }) => {
-    const { username, password } = body;
-    return await authenticateUser(username, password)
   }, {
     body: t.Object({
       username: t.String(),
