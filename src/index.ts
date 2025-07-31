@@ -32,8 +32,6 @@ mqttClient.subscribe("pi/readings");
 const pi = new Elysia()
   .post("/pi/login", async ({ body }) => {
     const { username, password } = body;
-    console.log(username, password);
-    
     return await authenticateUser(username, password)
   }, {
     body: t.Object({
